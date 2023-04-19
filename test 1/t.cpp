@@ -1,13 +1,9 @@
 #include <iostream>
 
-name space std;
-
 int main(){
 
+std::cout<<"d";
 
-
-std::cout>>"czesc"
 
 return 0;
-
 }
