@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SPI – rezystor szeregowy</title>
+<style>
+:root{--bg:#ffffff;--card:#f6f6f4;--text:#0b0b0b;--muted:#6b6a66;--grid:#e1e0d9}
+@media (prefers-color-scheme: dark){:root{--bg:#191919;--card:#252524;--text:#f0efec;--muted:#a3a29c;--grid:#2c2c2a}}
+body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.ctl{display:grid;grid-template-columns:150px minmax(0,1fr) 60px;gap:10px 12px;align-items:center;font-size:14px;margin-bottom:14px}
+.ctl label{color:var(--muted)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:14px}
+.card{background:var(--card);border-radius:8px;padding:10px 14px}
+.card div:first-child{font-size:13px;color:var(--muted)}
+.card div:last-child{font-size:20px;font-weight:500}
+.leg{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;color:var(--muted);margin-bottom:8px}
+.leg span{display:flex;align-items:center;gap:6px}
+p{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="ctl">
+<label for="r">Rezystor szeregowy</label><input type="range" id="r" min="0" max="100" step="1" value="33"><b id="rOut">33 Ω</b>
+<label for="len">Długość ścieżki</label><input type="range" id="len" min="3" max="40" step="1" value="15"><b id="lenOut">15 cm</b>
+</div>
+<div class="cards">
+<div class="card"><div>Szczyt / dołek bez R</div><div id="m0">–</div></div>
+<div class="card"><div>Szczyt / dołek z R</div><div id="m1">–</div></div>
+<div class="card"><div>Odbicie od źródła Γ</div><div id="m2">–</div></div>
+</div>
+<div class="leg">
+<span><span style="width:18px;border-top:2px dashed #eb6834"></span>Bez rezystora (0 Ω)</span>
+<span><span style="width:18px;border-top:2px solid #2a78d6"></span>Z rezystorem</span>
+<span><span style="width:18px;border-top:1px dotted #898781"></span>3.3 V i 0 V</span>
+</div>
+<div style="position:relative;width:100%;height:320px"><canvas id="c"></canvas></div>
+<p>Model: GPIO STM32 (very high speed) ~20 Ω, zbocze 0.8 ns, ścieżka Z0 = 50 Ω, ~6.7 ps/mm, wejście slave'a 5 pF. Model uproszczony (diagram odbić).</p>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const VDD=3.3,RDRV=20,Z0=50,TR=0.8,CIN=5e-12,T_END=24,DT=0.02,T_FALL=12;
+const dark=matchMedia('(prefers-color-scheme: dark)').matches;
+const grid=dark?'#2c2c2a':'#e1e0d9',tick='#898781';
+function ramp(t){return t<=0?0:t>=TR?1:t/TR;}
+function sim(R,lenCm){
+ const td=lenCm*10*0.0067,Rs=RDRV+R,G=(Rs-Z0)/(Rs+Z0),V0=VDD*Z0/(Rs+Z0);
+ const tau=Z0*CIN*1e9,out=[];let y=0;
+ for(let t=0;t<=T_END+1e-9;t+=DT){
+  let v=0;
+  for(let k=0;k<60;k++){const d=(2*k+1)*td;if(d>t)break;v+=2*V0*Math.pow(G,k)*(ramp(t-d)-ramp(t-d-T_FALL));}
+  y+=(v-y)*(DT/(tau+DT));out.push({x:+t.toFixed(2),y:+y.toFixed(3)});
+ }
+ return {data:out,G};
+}
+const chart=new Chart(document.getElementById('c'),{type:'line',data:{datasets:[
+ {label:'Bez R',data:[],borderColor:'#eb6834',borderDash:[6,4],borderWidth:2,pointRadius:0},
+ {label:'Z R',data:[],borderColor:'#2a78d6',borderWidth:2,pointRadius:0},
+ {label:'3.3V',data:[{x:0,y:3.3},{x:T_END,y:3.3}],borderColor:tick,borderDash:[2,3],borderWidth:1,pointRadius:0},
+ {label:'0V',data:[{x:0,y:0},{x:T_END,y:0}],borderColor:tick,borderDash:[2,3],borderWidth:1,pointRadius:0}
+]},options:{responsive:true,maintainAspectRatio:false,animation:false,parsing:false,
+ interaction:{mode:'index',intersect:false},
+ plugins:{legend:{display:false},tooltip:{filter:i=>i.datasetIndex<2,callbacks:{title:i=>i[0].parsed.x.toFixed(1)+' ns',label:i=>i.dataset.label+': '+i.parsed.y.toFixed(2)+' V'}}},
+ scales:{x:{type:'linear',min:0,max:T_END,title:{display:true,text:'czas [ns]',color:tick},grid:{display:false},ticks:{color:tick}},
+ y:{min:-2,max:5.5,title:{display:true,text:'napięcie na wejściu slave [V]',color:tick},grid:{color:grid},ticks:{color:tick}}}}});
+function upd(){
+ const R=+document.getElementById('r').value,L=+document.getElementById('len').value;
+ document.getElementById('rOut').textContent=R+' Ω';document.getElementById('lenOut').textContent=L+' cm';
+ const a=sim(0,L),b=sim(R,L);
+ chart.data.datasets[0].data=a.data;chart.data.datasets[1].data=b.data;chart.update();
+ const pk=d=>Math.max(...d.map(p=>p.y)),mn=d=>Math.min(...d.map(p=>p.y));
+ document.getElementById('m0').textContent=pk(a.data).toFixed(2)+' / '+mn(a.data).toFixed(2)+' V';
+ document.getElementById('m1').textContent=pk(b.data).toFixed(2)+' / '+mn(b.data).toFixed(2)+' V';
+ document.getElementById('m2').textContent=b.G.toFixed(2)+' (bez R: '+a.G.toFixed(2)+')';
+}
+document.getElementById('r').addEventListener('input',upd);document.getElementById('len').addEventListener('input',upd);upd();
+</script>
+</body>
+</html>
